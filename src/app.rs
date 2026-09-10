@@ -19,6 +19,7 @@ pub struct DrawerApp {
     pub drag_target_index: Option<usize>,
     pub is_reordering: bool,
     pub just_dropped: bool,
+    pub last_drop_time: Option<Instant>,
     pub status_message: Option<(String, Instant)>,
     pub show_settings: bool,
     pub launch_time: Instant,
@@ -57,6 +58,7 @@ impl DrawerApp {
             drag_target_index: None,
             is_reordering: false,
             just_dropped: false,
+            last_drop_time: None,
             status_message: None,
             show_settings: false,
             launch_time: Instant::now(),
@@ -116,6 +118,13 @@ impl DrawerApp {
         let dropped_files = ctx.input(|i| i.raw.dropped_files.clone());
         if !dropped_files.is_empty() {
             self.just_dropped = true;
+            self.last_drop_time = Some(Instant::now());
+            if self.hwnd_raw != 0 {
+                unsafe {
+                    let hwnd = windows::Win32::Foundation::HWND(self.hwnd_raw as _);
+                    let _ = windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow(hwnd);
+                }
+            }
         }
         for file in dropped_files {
             if let Some(path) = file.path {
@@ -323,8 +332,9 @@ impl DrawerApp {
         }
 
         // Click actions: only if not dragging, not just dropped, and not currently dragged
+        let is_recently_dropped = self.just_dropped || self.last_drop_time.map_or(false, |t| t.elapsed().as_millis() < 400);
         if response.clicked()
-            && !self.just_dropped
+            && !is_recently_dropped
             && !self.is_reordering
             && self.dragged_index.is_none()
             && !response.dragged()
@@ -486,8 +496,9 @@ impl DrawerApp {
         }
 
         // Click actions: only if not dragging, not just dropped, and not currently dragged
+        let is_recently_dropped = self.just_dropped || self.last_drop_time.map_or(false, |t| t.elapsed().as_millis() < 400);
         if response.clicked()
-            && !self.just_dropped
+            && !is_recently_dropped
             && !self.is_reordering
             && self.dragged_index.is_none()
             && !response.dragged()
@@ -625,11 +636,30 @@ impl eframe::App for DrawerApp {
             true
         };
 
+        // Check global mouse button state across the entire Windows desktop
+        // If the user is holding left or right mouse button anywhere on the screen, they may be dragging a file/shortcut
+        // from desktop or file explorer into the drawer, or interacting. We must NOT hide the drawer during drag!
+        let is_global_mouse_down = unsafe {
+            let lbutton = (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(
+                windows::Win32::UI::Input::KeyboardAndMouse::VK_LBUTTON.0 as i32,
+            ) as u16 & 0x8000) != 0;
+            let rbutton = (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(
+                windows::Win32::UI::Input::KeyboardAndMouse::VK_RBUTTON.0 as i32,
+            ) as u16 & 0x8000) != 0;
+            lbutton || rbutton
+        };
+
         let is_mouse_down = ctx.input(|i| i.pointer.any_down());
         let is_dragging = self.dragged_index.is_some() || self.is_reordering || ctx.input(|i| i.pointer.is_decidedly_dragging());
         let is_hovering_files = ctx.input(|i| !i.raw.hovered_files.is_empty());
+        let is_recently_dropped = self.just_dropped || self.last_drop_time.map_or(false, |t| t.elapsed().as_millis() < 400);
 
-        let is_active_interaction = is_mouse_down || is_dragging || is_hovering_files || is_cursor_inside;
+        let is_active_interaction = is_global_mouse_down
+            || is_mouse_down
+            || is_dragging
+            || is_hovering_files
+            || is_cursor_inside
+            || is_recently_dropped;
 
         // Check blur exit if configured (hides to tray)
         if self.config.auto_exit_on_blur && !self.show_settings {
@@ -642,8 +672,8 @@ impl eframe::App for DrawerApp {
             );
 
             if should_blur {
-                app_log!("Auto hide on blur triggered! (has_gained_focus={}, elapsed={}ms, is_fg={}). Hiding to tray.",
-                    self.has_gained_focus, elapsed, is_fg);
+                app_log!("Auto hide on blur triggered! (has_gained_focus={}, elapsed={}ms, is_fg={}, is_global_mouse_down={}). Hiding to tray.",
+                    self.has_gained_focus, elapsed, is_fg, is_global_mouse_down);
                 self.hide_to_tray(ctx);
                 return;
             }
@@ -657,6 +687,7 @@ impl eframe::App for DrawerApp {
                     self.config.move_item(from, to);
                 }
                 self.just_dropped = true;
+                self.last_drop_time = Some(Instant::now());
                 self.is_reordering = false;
             }
             self.dragged_index = None;
@@ -664,6 +695,12 @@ impl eframe::App for DrawerApp {
         }
 
         // Draw modern Fluent Acrylic-like frame
+        let border_stroke = if is_hovering_files {
+            Stroke::new(2.0, Color32::from_rgb(0, 160, 255))
+        } else {
+            Stroke::new(1.0, Color32::from_rgba_premultiplied(255, 255, 255, 22))
+        };
+
         let panel_frame = egui::Frame {
             inner_margin: Margin::same(12),
             outer_margin: Margin::ZERO,
@@ -675,7 +712,7 @@ impl eframe::App for DrawerApp {
                 color: Color32::from_rgba_premultiplied(0, 0, 0, 140),
             },
             fill: Color32::from_rgb(26, 30, 36),
-            stroke: Stroke::new(1.0, Color32::from_rgba_premultiplied(255, 255, 255, 22)),
+            stroke: border_stroke,
         };
 
         let mut should_exit = false;
@@ -686,6 +723,26 @@ impl eframe::App for DrawerApp {
             ui.add_space(8.0);
             ui.separator();
             ui.add_space(8.0);
+
+            // Drop zone indicator when dragging external files into drawer
+            if is_hovering_files {
+                egui::Frame::NONE
+                    .fill(Color32::from_rgba_premultiplied(0, 130, 255, 45))
+                    .corner_radius(CornerRadius::same(6))
+                    .stroke(Stroke::new(1.5, Color32::from_rgb(0, 180, 255)))
+                    .inner_margin(Margin::symmetric(12, 8))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("📥 放开鼠标将快捷方式添加至此处")
+                                    .color(Color32::from_rgb(100, 220, 255))
+                                    .size(13.0)
+                                    .strong(),
+                            );
+                        });
+                    });
+                ui.add_space(6.0);
+            }
 
             // Empty state or Items
             let query = self.search_query.trim().to_lowercase();
