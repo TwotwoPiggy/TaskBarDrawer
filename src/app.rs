@@ -17,6 +17,8 @@ pub struct DrawerApp {
     pub search_query: String,
     pub dragged_index: Option<usize>,
     pub drag_target_index: Option<usize>,
+    pub is_reordering: bool,
+    pub just_dropped: bool,
     pub status_message: Option<(String, Instant)>,
     pub show_settings: bool,
     pub launch_time: Instant,
@@ -53,6 +55,8 @@ impl DrawerApp {
             search_query: String::new(),
             dragged_index: None,
             drag_target_index: None,
+            is_reordering: false,
+            just_dropped: false,
             status_message: None,
             show_settings: false,
             launch_time: Instant::now(),
@@ -110,6 +114,9 @@ impl DrawerApp {
 
     fn handle_external_drop(&mut self, ctx: &egui::Context) {
         let dropped_files = ctx.input(|i| i.raw.dropped_files.clone());
+        if !dropped_files.is_empty() {
+            self.just_dropped = true;
+        }
         for file in dropped_files {
             if let Some(path) = file.path {
                 app_log!("External file dropped into window: {:?}", path);
@@ -306,13 +313,22 @@ impl DrawerApp {
         // Drag tracking
         if response.drag_started() {
             self.dragged_index = Some(index);
+            self.is_reordering = true;
+        }
+        if response.dragged() {
+            self.is_reordering = true;
         }
         if self.dragged_index.is_some() && self.dragged_index != Some(index) && is_hovered {
             self.drag_target_index = Some(index);
         }
 
-        // Click actions
-        if response.clicked() && self.dragged_index.is_none() {
+        // Click actions: only if not dragging, not just dropped, and not currently dragged
+        if response.clicked()
+            && !self.just_dropped
+            && !self.is_reordering
+            && self.dragged_index.is_none()
+            && !response.dragged()
+        {
             app_log!("Item clicked: {:?}", item.name);
             if let Err(e) = launch_item(item) {
                 self.set_status(e);
@@ -460,13 +476,22 @@ impl DrawerApp {
         // Drag tracking
         if response.drag_started() {
             self.dragged_index = Some(index);
+            self.is_reordering = true;
+        }
+        if response.dragged() {
+            self.is_reordering = true;
         }
         if self.dragged_index.is_some() && self.dragged_index != Some(index) && is_hovered {
             self.drag_target_index = Some(index);
         }
 
-        // Click actions
-        if response.clicked() && self.dragged_index.is_none() {
+        // Click actions: only if not dragging, not just dropped, and not currently dragged
+        if response.clicked()
+            && !self.just_dropped
+            && !self.is_reordering
+            && self.dragged_index.is_none()
+            && !response.dragged()
+        {
             app_log!("Item clicked: {:?}", item.name);
             if let Err(e) = launch_item(item) {
                 self.set_status(e);
@@ -579,14 +604,42 @@ impl eframe::App for DrawerApp {
             self.has_gained_focus = true;
         }
 
+        // Clear just_dropped flag when pointer is no longer released
+        if !ctx.input(|i| i.pointer.any_released()) && ctx.input(|i| i.raw.dropped_files.is_empty()) {
+            self.just_dropped = false;
+        }
+
+        // Check if cursor is physically inside the drawer window
+        let is_cursor_inside = if self.hwnd_raw != 0 {
+            let mut pt = windows::Win32::Foundation::POINT::default();
+            let mut rect = windows::Win32::Foundation::RECT::default();
+            unsafe {
+                let _ = windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt);
+                let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowRect(
+                    windows::Win32::Foundation::HWND(self.hwnd_raw as _),
+                    &mut rect,
+                );
+            }
+            pt.x >= rect.left && pt.x <= rect.right && pt.y >= rect.top && pt.y <= rect.bottom
+        } else {
+            true
+        };
+
+        let is_mouse_down = ctx.input(|i| i.pointer.any_down());
+        let is_dragging = self.dragged_index.is_some() || self.is_reordering || ctx.input(|i| i.pointer.is_decidedly_dragging());
+        let is_hovering_files = ctx.input(|i| !i.raw.hovered_files.is_empty());
+
+        let is_active_interaction = is_mouse_down || is_dragging || is_hovering_files || is_cursor_inside;
+
         // Check blur exit if configured (hides to tray)
         if self.config.auto_exit_on_blur && !self.show_settings {
             // Actively poll every 50ms while visible so clicking outside is detected immediately
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
 
             let elapsed = self.launch_time.elapsed().as_millis();
-            let should_blur = (self.has_gained_focus && elapsed > 150 && !is_fg)
-                || (elapsed > 400 && !is_fg);
+            let should_blur = !is_active_interaction && !is_fg && (
+                (self.has_gained_focus && elapsed > 200) || (elapsed > 600)
+            );
 
             if should_blur {
                 app_log!("Auto hide on blur triggered! (has_gained_focus={}, elapsed={}ms, is_fg={}). Hiding to tray.",
@@ -598,9 +651,13 @@ impl eframe::App for DrawerApp {
 
         // If mouse button is released anywhere, finalize internal drag & drop
         if ctx.input(|i| i.pointer.any_released()) {
-            if let (Some(from), Some(to)) = (self.dragged_index, self.drag_target_index) {
-                app_log!("Internal drag & drop completed: moved item from {} to {}", from, to);
-                self.config.move_item(from, to);
+            if self.is_reordering {
+                if let (Some(from), Some(to)) = (self.dragged_index, self.drag_target_index) {
+                    app_log!("Internal drag & drop completed: moved item from {} to {}", from, to);
+                    self.config.move_item(from, to);
+                }
+                self.just_dropped = true;
+                self.is_reordering = false;
             }
             self.dragged_index = None;
             self.drag_target_index = None;
