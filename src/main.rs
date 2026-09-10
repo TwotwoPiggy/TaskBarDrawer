@@ -83,9 +83,10 @@ fn main() -> eframe::Result<()> {
                 }
             }
 
-            // Setup system Chinese fonts (Microsoft YaHei) for crisp native rendering
+            // Setup system Chinese fonts (Microsoft YaHei) and symbol fonts
             font_utils::setup_custom_fonts(&cc.egui_ctx);
-            app_log!("Fonts initialization completed");
+            font_utils::apply_fluent_dark_theme(&cc.egui_ctx);
+            app_log!("Fonts and Fluent dark theme initialization completed");
 
             Ok(Box::new(DrawerApp::new(cc, hwnd_raw)))
         }),

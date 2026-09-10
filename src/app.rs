@@ -138,29 +138,52 @@ impl DrawerApp {
 
     fn render_header(&mut self, ui: &mut Ui, _ctx: &egui::Context) {
         ui.horizontal(|ui| {
-            // Search box
+            ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
+
+            // Sleek Fluent Search Box
             ui.add(
                 egui::TextEdit::singleline(&mut self.search_query)
-                    .hint_text("🔍 搜索快捷方式或脚本...")
-                    .desired_width(170.0),
+                    .hint_text("🔍 搜索快捷方式...")
+                    .desired_width(155.0)
+                    .margin(Margin::symmetric(8, 5)),
             );
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                // Close button (hides to tray)
-                if ui.button("✕").on_hover_text("收起抽屉 (Esc)").clicked() {
+                ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+
+                // Close button (×) with hover tooltip
+                let close_resp = ui.add(
+                    egui::Button::new(
+                        egui::RichText::new("×").size(15.0).color(Color32::from_rgb(200, 205, 215)),
+                    )
+                    .min_size(vec2(28.0, 26.0)),
+                );
+                if close_resp.on_hover_text("收起抽屉 (Esc)").clicked() {
                     app_log!("Close button clicked");
                     self.hide_to_tray(ui.ctx());
                 }
 
-                // Settings button
-                let settings_btn = ui.button(if self.show_settings { "▲ 设置" } else { "⚙" });
-                if settings_btn.clicked() {
+                // Settings button (⚙)
+                let settings_icon = if self.show_settings { "▲" } else { "⚙" };
+                let settings_btn = ui.add(
+                    egui::Button::new(
+                        egui::RichText::new(settings_icon).size(13.0),
+                    )
+                    .min_size(vec2(28.0, 26.0)),
+                );
+                if settings_btn.on_hover_text("设置").clicked() {
                     self.show_settings = !self.show_settings;
                     app_log!("Toggled settings view: {}", self.show_settings);
                 }
 
-                // Add button
-                if ui.button("➕ 添加").clicked() {
+                // Add button (➕)
+                let add_btn = ui.add(
+                    egui::Button::new(
+                        egui::RichText::new("➕").size(12.0),
+                    )
+                    .min_size(vec2(28.0, 26.0)),
+                );
+                if add_btn.on_hover_text("添加文件或快捷方式").clicked() {
                     app_log!("Opening file picker dialog");
                     if let Some(file) = rfd::FileDialog::new()
                         .set_title("选择要添加的脚本或程序")
@@ -176,12 +199,18 @@ impl DrawerApp {
                     self.has_gained_focus = false;
                 }
 
-                // Layout toggle button
-                let (layout_icon, next_layout) = match self.config.layout {
-                    LayoutMode::Grid => ("☰ 列表", LayoutMode::List),
-                    LayoutMode::List => ("⊞ 网格", LayoutMode::Grid),
+                // Layout toggle button (Grid / List)
+                let (layout_icon, next_layout, tooltip) = match self.config.layout {
+                    LayoutMode::Grid => ("☰", LayoutMode::List, "切换为列表视图"),
+                    LayoutMode::List => ("⊞", LayoutMode::Grid, "切换为网格视图"),
                 };
-                if ui.button(layout_icon).clicked() {
+                let layout_btn = ui.add(
+                    egui::Button::new(
+                        egui::RichText::new(layout_icon).size(13.0),
+                    )
+                    .min_size(vec2(28.0, 26.0)),
+                );
+                if layout_btn.on_hover_text(tooltip).clicked() {
                     self.config.layout = next_layout;
                     let _ = self.config.save();
                     app_log!("Switched layout mode to {:?}", next_layout);
@@ -240,24 +269,24 @@ impl DrawerApp {
         let is_drop_target = self.drag_target_index == Some(index);
 
         let bg_color = if is_dragging_this {
-            Color32::from_rgba_premultiplied(40, 80, 140, 90)
+            Color32::from_rgba_unmultiplied(0, 120, 215, 70)
         } else if is_drop_target {
-            Color32::from_rgba_premultiplied(30, 144, 255, 60)
+            Color32::from_rgba_unmultiplied(0, 160, 255, 60)
         } else if is_hovered {
-            Color32::from_rgba_premultiplied(255, 255, 255, 28)
+            Color32::from_rgba_unmultiplied(255, 255, 255, 25)
         } else {
-            Color32::from_rgba_premultiplied(255, 255, 255, 8)
+            Color32::from_rgba_unmultiplied(255, 255, 255, 10)
         };
 
         let stroke = if is_drop_target {
-            Stroke::new(2.0, Color32::from_rgb(0, 191, 255))
+            Stroke::new(1.5, Color32::from_rgb(0, 160, 255))
         } else if is_hovered {
-            Stroke::new(1.0, Color32::from_rgba_premultiplied(255, 255, 255, 70))
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 55))
         } else {
-            Stroke::new(1.0, Color32::from_rgba_premultiplied(255, 255, 255, 14))
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 14))
         };
 
-        ui.painter().rect(rect, CornerRadius::same(8), bg_color, stroke, StrokeKind::Inside);
+        ui.painter().rect(rect, CornerRadius::same(10), bg_color, stroke, StrokeKind::Inside);
 
         // Render Icon
         let icon_rect = Rect::from_center_size(
@@ -323,7 +352,7 @@ impl DrawerApp {
             Align2::CENTER_TOP,
             truncated,
             FontId::proportional(12.0),
-            Color32::from_rgb(230, 230, 230),
+            Color32::from_rgb(238, 242, 250),
         );
 
         // Drag tracking
@@ -416,19 +445,21 @@ impl DrawerApp {
         let is_drop_target = self.drag_target_index == Some(index);
 
         let bg_color = if is_dragging_this {
-            Color32::from_rgba_premultiplied(40, 80, 140, 90)
+            Color32::from_rgba_unmultiplied(0, 120, 215, 60)
         } else if is_drop_target {
-            Color32::from_rgba_premultiplied(30, 144, 255, 60)
+            Color32::from_rgba_unmultiplied(0, 160, 255, 50)
         } else if is_hovered {
-            Color32::from_rgba_premultiplied(255, 255, 255, 22)
+            Color32::from_rgba_unmultiplied(255, 255, 255, 20)
         } else {
-            Color32::from_rgba_premultiplied(255, 255, 255, 6)
+            Color32::from_rgba_unmultiplied(255, 255, 255, 8)
         };
 
         let stroke = if is_drop_target {
-            Stroke::new(2.0, Color32::from_rgb(0, 191, 255))
+            Stroke::new(1.5, Color32::from_rgb(0, 160, 255))
+        } else if is_hovered {
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 35))
         } else {
-            Stroke::new(1.0, Color32::from_rgba_premultiplied(255, 255, 255, 12))
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 12))
         };
 
         ui.painter().rect(rect, CornerRadius::same(6), bg_color, stroke, StrokeKind::Inside);
@@ -705,18 +736,18 @@ impl eframe::App for DrawerApp {
         let border_stroke = if is_hovering_files {
             Stroke::new(2.0, Color32::from_rgb(0, 160, 255))
         } else {
-            Stroke::new(1.0, Color32::from_rgba_premultiplied(255, 255, 255, 22))
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 22))
         };
 
         let panel_frame = egui::Frame {
-            inner_margin: Margin::same(12),
+            inner_margin: Margin::symmetric(14, 12),
             outer_margin: Margin::ZERO,
             corner_radius: CornerRadius::same(12),
             shadow: egui::Shadow {
-                offset: [0, 6],
-                blur: 16,
+                offset: [0, 8],
+                blur: 24,
                 spread: 0,
-                color: Color32::from_rgba_premultiplied(0, 0, 0, 140),
+                color: Color32::from_rgba_unmultiplied(0, 0, 0, 160),
             },
             fill: Color32::from_rgb(26, 30, 36),
             stroke: border_stroke,
@@ -727,15 +758,20 @@ impl eframe::App for DrawerApp {
         egui::CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
             // Header
             self.render_header(ui, ctx);
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
+            ui.add_space(6.0);
+            let (sep_rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+            ui.painter().rect_filled(
+                sep_rect,
+                CornerRadius::ZERO,
+                Color32::from_rgba_unmultiplied(255, 255, 255, 16),
+            );
+            ui.add_space(6.0);
 
             // Drop zone indicator when dragging external files into drawer
             if is_hovering_files {
                 egui::Frame::NONE
-                    .fill(Color32::from_rgba_premultiplied(0, 130, 255, 45))
-                    .corner_radius(CornerRadius::same(6))
+                    .fill(Color32::from_rgba_unmultiplied(0, 130, 255, 40))
+                    .corner_radius(CornerRadius::same(8))
                     .stroke(Stroke::new(1.5, Color32::from_rgb(0, 180, 255)))
                     .inner_margin(Margin::symmetric(12, 8))
                     .show(ui, |ui| {
