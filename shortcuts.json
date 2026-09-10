@@ -1,0 +1,25 @@
+{
+  "layout": "Grid",
+  "auto_exit_on_launch": true,
+  "auto_exit_on_blur": false,
+  "items": [
+    {
+      "id": "启动本地服务-1789049992310",
+      "name": "启动本地服务",
+      "path": "D:\\Computers\\AIDevelop\\Tools\\WindowsTools\\shortcuts\\启动本地服务.bat",
+      "args": null,
+      "custom_icon": null,
+      "run_as_admin": false,
+      "silent": false
+    },
+    {
+      "id": "清理系统缓存_silent-1789049992312",
+      "name": "清理系统缓存_silent",
+      "path": "D:\\Computers\\AIDevelop\\Tools\\WindowsTools\\shortcuts\\清理系统缓存_silent.bat",
+      "args": null,
+      "custom_icon": null,
+      "run_as_admin": false,
+      "silent": true
+    }
+  ]
+}
