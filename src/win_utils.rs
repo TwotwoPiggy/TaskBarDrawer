@@ -1,4 +1,4 @@
-use windows::Win32::Foundation::{BOOL, HWND, RECT};
+use windows::Win32::Foundation::{BOOL, HWND, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE,
     DWM_WINDOW_CORNER_PREFERENCE,
@@ -7,7 +7,8 @@ use windows::Win32::UI::Shell::{
     SHAppBarMessage, ABM_GETTASKBARPOS, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP, APPBARDATA,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetSystemMetrics, GetWindowRect, SM_CXSCREEN, SM_CYSCREEN,
+    FindWindowExW, FindWindowW, GetForegroundWindow, GetSystemMetrics, GetWindowRect, SM_CXSCREEN,
+    SM_CYSCREEN,
 };
 
 pub fn apply_win11_dwm_attributes(hwnd_raw: isize, is_dark: bool) {
@@ -104,4 +105,75 @@ pub fn calculate_popup_position_for_hwnd(hwnd: HWND, fallback_w: f32, fallback_h
 
     let (x, y) = calculate_popup_position(w as f32, h as f32);
     (x as i32, y as i32, w, h)
+}
+
+/// Checks whether the given screen coordinates are inside or immediately near the system tray / notification area
+pub fn is_cursor_in_tray_area(pt: POINT) -> bool {
+    // 1. Try finding TrayNotifyWnd under Shell_TrayWnd
+    unsafe {
+        if let Ok(shell_tray) = FindWindowW(windows::core::w!("Shell_TrayWnd"), None) {
+            if !shell_tray.is_invalid() {
+                if let Ok(tray_notify) = FindWindowExW(
+                    shell_tray,
+                    HWND::default(),
+                    windows::core::w!("TrayNotifyWnd"),
+                    None,
+                ) {
+                    if !tray_notify.is_invalid() {
+                        let mut rect = RECT::default();
+                        if GetWindowRect(tray_notify, &mut rect).is_ok() {
+                            // Expand the hitbox by 50px so hovering slightly above/around the tray triggers smoothly
+                            let expanded_left = rect.left - 50;
+                            let expanded_top = rect.top - 60;
+                            let expanded_right = rect.right + 30;
+                            let expanded_bottom = rect.bottom + 30;
+                            if pt.x >= expanded_left
+                                && pt.x <= expanded_right
+                                && pt.y >= expanded_top
+                                && pt.y <= expanded_bottom
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Taskbar positioning fallback via SHAppBarMessage
+    let mut appbar_data = APPBARDATA::default();
+    appbar_data.cbSize = std::mem::size_of::<APPBARDATA>() as u32;
+    let success = unsafe { SHAppBarMessage(ABM_GETTASKBARPOS, &mut appbar_data) };
+    if success != 0 {
+        let rc = appbar_data.rc;
+        match appbar_data.uEdge {
+            ABE_BOTTOM => {
+                let tray_left = rc.right - 350;
+                let tray_top = rc.top - 60;
+                return pt.x >= tray_left && pt.x <= rc.right && pt.y >= tray_top && pt.y <= rc.bottom;
+            }
+            ABE_TOP => {
+                let tray_left = rc.right - 350;
+                let tray_bottom = rc.bottom + 60;
+                return pt.x >= tray_left && pt.x <= rc.right && pt.y >= rc.top && pt.y <= tray_bottom;
+            }
+            ABE_LEFT => {
+                let tray_right = rc.right + 60;
+                let tray_top = rc.bottom - 350;
+                return pt.x >= rc.left && pt.x <= tray_right && pt.y >= tray_top && pt.y <= rc.bottom;
+            }
+            ABE_RIGHT => {
+                let tray_left = rc.left - 60;
+                let tray_top = rc.bottom - 350;
+                return pt.x >= tray_left && pt.x <= rc.right && pt.y >= tray_top && pt.y <= rc.bottom;
+            }
+            _ => {}
+        }
+    }
+
+    // 3. Fallback: bottom-right corner of primary screen
+    let screen_w = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+    let screen_h = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+    pt.x >= screen_w - 350 && pt.y >= screen_h - 100
 }

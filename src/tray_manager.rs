@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tray_icon::{
@@ -17,6 +17,15 @@ use crate::logger::app_log;
 use crate::win_utils::calculate_popup_position_for_hwnd;
 
 static LAST_HIDE_MILLIS: AtomicU64 = AtomicU64::new(0);
+static AUTO_SHOW_ON_TRAY_HOVER: AtomicBool = AtomicBool::new(true);
+
+pub fn set_auto_show_on_tray_hover(enabled: bool) {
+    AUTO_SHOW_ON_TRAY_HOVER.store(enabled, Ordering::Relaxed);
+}
+
+pub fn get_auto_show_on_tray_hover() -> bool {
+    AUTO_SHOW_ON_TRAY_HOVER.load(Ordering::Relaxed)
+}
 
 pub fn record_window_hide() {
     let now = SystemTime::now()
@@ -190,7 +199,7 @@ impl TrayManager {
         }));
 
         // 2. Direct Menu click event handler
-        let ctx_clone2 = egui_ctx;
+        let ctx_clone2 = egui_ctx.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             app_log!("MenuEvent callback triggered: {:?}", event.id);
             if event.id == open_item_id {
@@ -206,10 +215,83 @@ impl TrayManager {
             }
         }));
 
+        // 3. Background Drag-to-Tray auto-popup monitor thread
+        let ctx_clone3 = egui_ctx;
+        std::thread::Builder::new()
+            .name("tray-drag-monitor".into())
+            .spawn(move || {
+                run_tray_drag_monitor(hwnd_raw, ctx_clone3);
+            })
+            .ok();
+
         app_log!("TrayManager successfully created tray icon and event handlers for HWND {}", hwnd_raw);
 
         Ok(Self {
             _tray_icon: tray_icon,
         })
+    }
+}
+
+fn run_tray_drag_monitor(hwnd_raw: isize, egui_ctx: egui::Context) {
+    let hwnd = HWND(hwnd_raw as _);
+    let mut hover_start: Option<std::time::Instant> = None;
+
+    loop {
+        // 1. Check if left mouse button is pressed anywhere across Windows
+        let is_lbutton_down = unsafe {
+            (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(
+                windows::Win32::UI::Input::KeyboardAndMouse::VK_LBUTTON.0 as i32,
+            ) as u16 & 0x8000) != 0
+        };
+
+        let sleep_ms = if is_lbutton_down { 40 } else { 100 };
+        std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+
+        // If disabled in settings, skip
+        if !get_auto_show_on_tray_hover() {
+            hover_start = None;
+            continue;
+        }
+
+        if !is_lbutton_down {
+            hover_start = None;
+            continue;
+        }
+
+        // 2. If window is already visible, no need to auto-show
+        let is_visible = unsafe { IsWindowVisible(hwnd).as_bool() };
+        if is_visible {
+            hover_start = None;
+            continue;
+        }
+
+        // 3. If window was recently hidden (e.g. within 600ms), don't bounce open
+        if was_recently_hidden(600) {
+            hover_start = None;
+            continue;
+        }
+
+        // 4. Check if cursor is in tray area
+        let mut pt = windows::Win32::Foundation::POINT::default();
+        let got_pos = unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt) }.is_ok();
+        if !got_pos || !crate::win_utils::is_cursor_in_tray_area(pt) {
+            hover_start = None;
+            continue;
+        }
+
+        // 5. Cursor is hovering over tray area with mouse button held down! Check dwell time
+        let now = std::time::Instant::now();
+        match hover_start {
+            None => {
+                hover_start = Some(now);
+            }
+            Some(start) => {
+                if start.elapsed() >= std::time::Duration::from_millis(200) {
+                    app_log!("Tray drag-hover detected at ({}, {}) for >200ms! Auto-showing drawer window.", pt.x, pt.y);
+                    show_window_by_hwnd(hwnd_raw, &egui_ctx);
+                    hover_start = None;
+                }
+            }
+        }
     }
 }

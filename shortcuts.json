@@ -1,7 +1,8 @@
 {
   "layout": "Grid",
   "auto_exit_on_launch": true,
-  "auto_exit_on_blur": false,
+  "auto_exit_on_blur": true,
+  "auto_show_on_tray_hover": true,
   "items": [
     {
       "id": "启动本地服务-1789049992310",

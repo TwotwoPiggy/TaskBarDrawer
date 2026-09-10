@@ -203,6 +203,13 @@ impl DrawerApp {
                 }
             });
             ui.horizontal(|ui| {
+                if ui.checkbox(&mut self.config.auto_show_on_tray_hover, "拖拽文件至托盘时自动展开抽屉").changed() {
+                    crate::tray_manager::set_auto_show_on_tray_hover(self.config.auto_show_on_tray_hover);
+                    let _ = self.config.save();
+                    app_log!("Updated auto_show_on_tray_hover: {}", self.config.auto_show_on_tray_hover);
+                }
+            });
+            ui.horizontal(|ui| {
                 if ui.button("📂 打开 shortcuts 快捷文件夹").clicked() {
                     let dir = AppConfig::shortcuts_dir();
                     let _ = std::fs::create_dir_all(&dir);

@@ -30,6 +30,8 @@ pub struct AppConfig {
     pub auto_exit_on_launch: bool,
     #[serde(default = "default_true")]
     pub auto_exit_on_blur: bool,
+    #[serde(default = "default_true")]
+    pub auto_show_on_tray_hover: bool,
     pub items: Vec<ShortcutItem>,
 }
 
@@ -43,6 +45,7 @@ impl Default for AppConfig {
             layout: LayoutMode::Grid,
             auto_exit_on_launch: true,
             auto_exit_on_blur: true,
+            auto_show_on_tray_hover: true,
             items: Vec::new(),
         }
     }
@@ -80,6 +83,7 @@ impl AppConfig {
 
         // Automatically scan shortcuts/ folder if present
         config.scan_shortcuts_folder();
+        crate::tray_manager::set_auto_show_on_tray_hover(config.auto_show_on_tray_hover);
         let _ = config.save();
         config
     }
